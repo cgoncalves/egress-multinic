@@ -1,5 +1,8 @@
 # EgressIP pod -- matched by the EgressIP CR via podSelector (app: demo).
 # Traffic SNAT'd to the admin-configured /32 IP on the outgoing interface.
+#
+# Scheduled on non-gateway workers so traffic traverses the physical network
+# to the gateway node, enabling the iifname-based traffic differentiation.
 ---
 apiVersion: v1
 kind: Pod
@@ -9,14 +12,22 @@ metadata:
   labels:
     app: demo
 spec:
+  terminationGracePeriodSeconds: 0
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: k8s.ovn.org/egress-assignable
+                operator: DoesNotExist
   containers:
     - name: demo
       image: registry.k8s.io/e2e-test-images/agnhost:2.45
       command: ["sleep", "infinity"]
 
 # Non-EgressIP pod -- NOT matched by any EgressIP CR.
-# Traffic masqueraded to the host IP of the outgoing interface (when
-# egress-gateway is active on worker nodes).
+# Traffic masqueraded to the host IP of the outgoing interface via
+# egress-gateway routing.
 ---
 apiVersion: v1
 kind: Pod
@@ -24,6 +35,14 @@ metadata:
   name: non-egressip-pod
   namespace: demo-egressip
 spec:
+  terminationGracePeriodSeconds: 0
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: k8s.ovn.org/egress-assignable
+                operator: DoesNotExist
   containers:
     - name: test
       image: registry.k8s.io/e2e-test-images/agnhost:2.45
