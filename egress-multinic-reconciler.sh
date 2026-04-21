@@ -222,6 +222,24 @@ cleanup_egress() {
   nft delete table inet "$NFT_TABLE_EGRESS" 2>/dev/null || true
 }
 
+# Validates that the egress nftables table matches what setup_egress() would
+# create. Returns non-zero if the table is missing or stale (e.g., missing
+# SNAT rules after a boot-time race).
+validate_egress() {
+  local current
+  current=$(nft list table inet "$NFT_TABLE_EGRESS" 2>/dev/null) || return 1
+
+  echo "$current" | grep -q "iifname \"${OVN_MGMT_PORT}\"" || return 1
+
+  for entry in "${EGRESSIP_SNAT[@]+"${EGRESSIP_SNAT[@]}"}"; do
+    [ -z "$entry" ] && continue
+    IFS=':' read -r iface snat_ip <<< "$entry"
+    echo "$current" | grep -q "oifname \"${iface}\".*snat.*${snat_ip}" || return 1
+  done
+
+  return 0
+}
+
 cleanup_all() {
   cleanup_worker
   cleanup_egress
@@ -279,7 +297,14 @@ main() {
 
     if is_egress_node "$node_name"; then
       local desired_state="egress"
+      local needs_apply=false
       if [ "$desired_state" != "$LAST_STATE" ]; then
+        needs_apply=true
+      elif ! validate_egress; then
+        echo "[egress] nftables rules are stale, re-applying"
+        needs_apply=true
+      fi
+      if [ "$needs_apply" = true ]; then
         echo "[egress] accepting routed traffic for ${POD_CIDRS}${POD_CIDRS_V6:+ ${POD_CIDRS_V6}}"
         cleanup_worker
         setup_egress
