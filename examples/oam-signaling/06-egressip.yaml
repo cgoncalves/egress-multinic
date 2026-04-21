@@ -1,0 +1,14 @@
+# EgressIP bound to the OAM interface (oam-host, 192.168.150.0/24 subnet).
+# With the workaround, actual SNAT uses the admin-configured /32 IP on the
+# interface (192.168.150.200), not this EgressIP address.
+---
+apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+  name: egressip-oam
+spec:
+  egressIPs:
+    - 192.168.150.100
+  namespaceSelector:
+    matchLabels:
+      egress-group: oam-sig

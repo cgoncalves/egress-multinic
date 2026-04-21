@@ -1,0 +1,50 @@
+# NodeNetworkConfigurationPolicy template for alternate interfaces.
+#
+# Configures per-node:
+# - Interface IPs (/24) for connectivity
+# - Admin-configured SNAT IPs (/32) for EgressIP traffic
+# - Static routes for destination-based routing
+# - IP routing policy rules (priority 5550) to direct destination traffic to
+#   the main routing table before the EgressIP rule (priority 6000)
+#
+# Create one NNCP per gateway node so that each node can have its own /32 SNAT
+# IP addresses. Adjust interface names, IP addresses, routes, and node
+# selector to match your environment.
+#
+# Note: use type "veth" for veth-pair interfaces (e.g., test environments) and
+# type "ethernet" for physical NICs.
+---
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
+metadata:
+  name: egress-multinic-node1
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: gateway-node1.example.com
+  desiredState:
+    interfaces:
+      - name: <INTERFACE_1>
+        type: ethernet
+        state: up
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: <HOST_IP_1>
+              prefix-length: 24
+            - ip: <SNAT_IP_1>
+              prefix-length: 32
+        ipv6:
+          enabled: false
+
+    routes:
+      config:
+        - destination: <DEST_CIDR_1>
+          next-hop-address: <GATEWAY_IP_1>
+          next-hop-interface: <INTERFACE_1>
+
+    route-rules:
+      config:
+        - ip-to: <DEST_CIDR_1>
+          route-table: 254
+          priority: 5550

@@ -1,0 +1,51 @@
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  name: 99-egress-multinic
+  labels:
+    machineconfiguration.openshift.io/role: worker
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    storage:
+      files:
+        - path: /usr/local/bin/egress-multinic-reconciler.sh
+          mode: 0755
+          overwrite: true
+          contents:
+            source: data:text/plain;charset=utf-8;base64,<BASE64_ENCODED_SCRIPT>
+        - path: /etc/egress-multinic/egress-multinic.conf
+          mode: 0644
+          overwrite: true
+          contents:
+            source: data:text/plain;charset=utf-8;base64,<BASE64_ENCODED_CONFIG>
+        - path: /etc/egress-multinic/ca.crt
+          mode: 0644
+          overwrite: true
+          contents:
+            source: data:text/plain;charset=utf-8;base64,<BASE64_ENCODED_CA>
+        - path: /etc/egress-multinic/token
+          mode: 0600
+          overwrite: true
+          contents:
+            source: data:text/plain;charset=utf-8;base64,<BASE64_ENCODED_TOKEN>
+    systemd:
+      units:
+        - name: egress-multinic.service
+          enabled: true
+          contents: |
+            [Unit]
+            Description=Egress multi-NIC reconciler
+            After=network-online.target kubelet.service
+            Wants=network-online.target
+
+            [Service]
+            Type=simple
+            ExecStart=/usr/local/bin/egress-multinic-reconciler.sh
+            ExecStop=/usr/local/bin/egress-multinic-reconciler.sh cleanup
+            Restart=on-failure
+            RestartSec=10
+
+            [Install]
+            WantedBy=multi-user.target

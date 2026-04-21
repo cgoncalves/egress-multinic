@@ -1,0 +1,7 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-egressip
+  labels:
+    egress-group: oam-sig

@@ -1,0 +1,61 @@
+# NNCP for the OAM/signaling example.
+# Configures oam-host and sig-host veth interfaces with:
+# - Host IPs for connectivity
+# - /32 SNAT IPs for EgressIP traffic
+# - Static routes for destination-based routing
+# - IP rules at priority 5550 to bypass EgressIP routing table
+---
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
+metadata:
+  name: egress-multinic-oam-sig
+spec:
+  nodeSelector:
+    k8s.ovn.org/egress-assignable: ""
+  desiredState:
+    interfaces:
+      - name: oam-host
+        type: veth
+        state: up
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: 192.168.150.10
+              prefix-length: 24
+            - ip: 192.168.150.200
+              prefix-length: 32
+        ipv6:
+          enabled: false
+
+      - name: sig-host
+        type: veth
+        state: up
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: 192.168.200.10
+              prefix-length: 24
+            - ip: 192.168.200.200
+              prefix-length: 32
+        ipv6:
+          enabled: false
+
+    routes:
+      config:
+        - destination: 192.168.250.0/24
+          next-hop-address: 192.168.150.1
+          next-hop-interface: oam-host
+        - destination: 192.168.251.0/24
+          next-hop-address: 192.168.200.1
+          next-hop-interface: sig-host
+
+    route-rules:
+      config:
+        - ip-to: 192.168.250.0/24
+          route-table: 254
+          priority: 5550
+        - ip-to: 192.168.251.0/24
+          route-table: 254
+          priority: 5550

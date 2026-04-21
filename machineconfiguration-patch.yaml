@@ -1,0 +1,27 @@
+apiVersion: operator.openshift.io/v1
+kind: MachineConfiguration
+metadata:
+  name: cluster
+spec:
+  nodeDisruptionPolicy:
+    files:
+      - path: /usr/local/bin/egress-multinic-reconciler.sh
+        actions:
+          - type: Restart
+            restart:
+              serviceName: egress-multinic.service
+      - path: /etc/egress-multinic/egress-multinic.conf
+        actions:
+          - type: Restart
+            restart:
+              serviceName: egress-multinic.service
+      - path: /etc/egress-multinic/ca.crt
+        actions:
+          - type: Restart
+            restart:
+              serviceName: egress-multinic.service
+      - path: /etc/egress-multinic/token
+        actions:
+          - type: Restart
+            restart:
+              serviceName: egress-multinic.service

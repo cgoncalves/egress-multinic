@@ -1,0 +1,22 @@
+# EgressIP template.
+#
+# Each EgressIP address must be in the subnet of an interface on the gateway
+# node. This binds the EgressIP to that interface.
+#
+# On br-ex (OVN interface), per-pod SNAT to the EgressIP address is handled
+# by OVN via OVS flows.
+#
+# On alternate (non-OVN) interfaces, all traffic is SNAT'd to the
+# admin-configured /32 IP on that interface (configured via NNCP and the
+# egress-multinic reconciler), not the EgressIP address.
+---
+apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+  name: <EGRESSIP_NAME>
+spec:
+  egressIPs:
+    - <EGRESSIP_ADDRESS>
+  namespaceSelector:
+    matchLabels:
+      <LABEL_KEY>: <LABEL_VALUE>

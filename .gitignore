@@ -1,0 +1,4 @@
+machineconfig-egress-multinic-final.yaml
+examples/oam-signaling/02-machineconfig-final.yaml
+examples/oam-signaling/aux/ca.crt
+examples/oam-signaling/aux/token
