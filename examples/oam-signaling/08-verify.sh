@@ -19,12 +19,24 @@ echo ""
 
 echo "=== Test 1: EgressIP pod -> OAM server (192.168.250.1:8080) ==="
 echo "Expected source: 192.168.150.200 (SNAT /32 on oam-host)"
-oc exec -n demo-egressip demo-pod -- curl -s --connect-timeout 5 192.168.250.1:8080 || echo "(failed)"
+oc exec -n demo-egressip egressip-pod -- curl -s --connect-timeout 5 192.168.250.1:8080 || echo "(failed)"
 echo ""
 
 echo "=== Test 2: EgressIP pod -> signaling server (192.168.251.1:8081) ==="
 echo "Expected source: 192.168.200.200 (SNAT /32 on sig-host)"
-oc exec -n demo-egressip demo-pod -- curl -s --connect-timeout 5 192.168.251.1:8081 || echo "(failed)"
+oc exec -n demo-egressip egressip-pod -- curl -s --connect-timeout 5 192.168.251.1:8081 || echo "(failed)"
+echo ""
+
+echo "=== Test 3: Non-EgressIP pod -> OAM server (192.168.250.1:8080) ==="
+echo "Expected source: 192.168.150.10 (masquerade to host IP on oam-host)"
+echo "Note: requires egress-gateway active on worker nodes. Without it, all pod"
+echo "      traffic enters via ovn-k8s-mp0 and gets /32 SNAT instead."
+oc exec -n demo-egressip non-egressip-pod -- curl -s --connect-timeout 5 192.168.250.1:8080 || echo "(failed)"
+echo ""
+
+echo "=== Test 4: Non-EgressIP pod -> signaling server (192.168.251.1:8081) ==="
+echo "Expected source: 192.168.200.10 (masquerade to host IP on sig-host)"
+oc exec -n demo-egressip non-egressip-pod -- curl -s --connect-timeout 5 192.168.251.1:8081 || echo "(failed)"
 echo ""
 
 echo "=== Gateway node state (${GATEWAY_NODE}) ==="
