@@ -141,8 +141,10 @@ netns "signaling": HTTP server sees source: 192.168.200.200
 | 04 | `04-nncp.yaml` | `oc apply` -- configure /32 IPs, routes, ip rules |
 | 05 | `05-namespace.yaml` | `oc apply` -- create namespace with egress-group label |
 | 06 | `06-egressip.yaml` | `oc apply` -- EgressIP CR (selects pods with `app: demo`) |
-| 07 | `07-pod.yaml` | `oc apply` -- EgressIP pod and non-EgressIP pod |
-| 08 | `08-verify.sh` | Verify SNAT behavior for both pods |
+| 07a | `07-pod.yaml` | `oc apply` -- EgressIP and non-EgressIP pods on workers |
+| 07b | `07b-egressservice.yaml` | `oc apply` -- EgressService pod, LB service, MetalLB config |
+| 07c | `07c-gateway-pods.yaml` | `oc apply` -- EgressIP, non-EgressIP, EgressService pods on gateway |
+| 08 | `08-verify.sh` | Verify SNAT behavior for all pods |
 | 09 | `09-cleanup.sh` | Tear down all resources |
 
 ## Usage
@@ -160,10 +162,16 @@ oc apply -f examples/oam-signaling/04-nncp.yaml
 oc apply -f examples/oam-signaling/05-namespace.yaml
 oc apply -f examples/oam-signaling/06-egressip.yaml
 oc apply -f examples/oam-signaling/07-pod.yaml
+oc apply -f examples/oam-signaling/07b-egressservice.yaml   # requires MetalLB
+oc apply -f examples/oam-signaling/07c-gateway-pods.yaml
 
 # Wait for pods
 oc wait -n demo-egressip pod/egressip-pod --for=condition=Ready --timeout=120s
 oc wait -n demo-egressip pod/non-egressip-pod --for=condition=Ready --timeout=120s
+oc wait -n demo-egressip pod/egressservice-pod --for=condition=Ready --timeout=120s
+oc wait -n demo-egressip pod/gw-egressip-pod --for=condition=Ready --timeout=120s
+oc wait -n demo-egressip pod/gw-non-egressip-pod --for=condition=Ready --timeout=120s
+oc wait -n demo-egressip pod/gw-egressservice-pod --for=condition=Ready --timeout=120s
 
 # Verify
 bash examples/oam-signaling/08-verify.sh
@@ -174,16 +182,23 @@ bash examples/oam-signaling/09-cleanup.sh
 
 ## Expected Results
 
-| Test | Pod | Destination | Expected Source IP | Why |
-|------|-----|-------------|-------------------|-----|
-| 1 | egressip-pod | 192.168.250.1:8080 (OAM) | 192.168.150.200 | EgressIP traffic via ovn-k8s-mp0, /32 SNAT |
-| 2 | egressip-pod | 192.168.251.1:8081 (signaling) | 192.168.200.200 | EgressIP traffic via ovn-k8s-mp0, /32 SNAT |
-| 3 | non-egressip-pod | 192.168.250.1:8080 (OAM) | 192.168.150.10 | Egress-gateway traffic via br-ex, masquerade |
-| 4 | non-egressip-pod | 192.168.251.1:8081 (signaling) | 192.168.200.10 | Egress-gateway traffic via br-ex, masquerade |
+| Test | Pod | Location | Destination | Expected Source IP | Why |
+|------|-----|----------|-------------|-------------------|-----|
+| 1 | egressip-pod | worker | OAM | 192.168.150.200 | EgressIP, source in `egressip-pods` set, /32 SNAT |
+| 2 | egressip-pod | worker | signaling | 192.168.200.200 | EgressIP, source in `egressip-pods` set, /32 SNAT |
+| 3 | non-egressip-pod | worker | OAM | 192.168.150.10 | Egress-gateway traffic via br-ex, masquerade |
+| 4 | non-egressip-pod | worker | signaling | 192.168.200.10 | Egress-gateway traffic via br-ex, masquerade |
+| 5 | egressservice-pod | worker | OAM | 10.6.105.240 | EgressService, source in `egresssvc-pods` set, LB IP SNAT by OVN |
+| 6 | egressservice-pod | worker | signaling | 10.6.105.240 | EgressService, source in `egresssvc-pods` set, LB IP SNAT by OVN |
+| 7 | gw-egressip-pod | gateway | OAM | 192.168.150.200 | EgressIP on gateway, source in `egressip-pods` set, /32 SNAT |
+| 8 | gw-non-egressip-pod | gateway | OAM | 192.168.150.10 | Not in any set, masquerade fallback |
+| 9 | gw-egressservice-pod | gateway | OAM | 10.6.105.241 | EgressService on gateway, source in `egresssvc-pods` set, LB IP SNAT by OVN |
 
 ## Notes
 
-- Both pods use node affinity (`k8s.ovn.org/egress-assignable DoesNotExist`) to schedule on non-gateway workers. This is required for the `iifname`-based traffic differentiation to work.
-- The EgressIP CR uses `podSelector` (`app: demo`) to match only `egressip-pod`. The `non-egressip-pod` has no matching label and is not associated with any EgressIP.
+- Worker pods (tests 1-6) use node affinity (`k8s.ovn.org/egress-assignable DoesNotExist`) to schedule on non-gateway workers. Gateway pods (tests 7-9) use the inverse (`Exists`).
+- The EgressIP CR uses `podSelector` (`app: demo`) to match only `egressip-pod` and `gw-egressip-pod`. Other pods are not associated with any EgressIP.
+- EgressService CRs include `nodeSelector` matching `k8s.ovn.org/egress-assignable` to ensure the EgressService host is a gateway node. Requires MetalLB installed.
+- The reconciler maintains two nftables sets (`egressip-pods` and `egresssvc-pods`) updated each cycle. There is a window of up to `RECONCILE_INTERVAL` seconds after assignment changes where SNAT may be incorrect.
 - The simulated infrastructure (netns, veth pairs, HTTP servers) is ephemeral and does not survive node reboots. Re-run `03-setup-infra.sh` after a gateway node reboot.
 - The NNCP uses `type: veth` for the interfaces since they are veth pairs created by the setup script. For physical NICs, use `type: ethernet`.

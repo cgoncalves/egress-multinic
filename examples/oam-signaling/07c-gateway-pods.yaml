@@ -1,0 +1,96 @@
+# Pods scheduled ON the gateway node to verify the limitation: all traffic
+# from pods on gateway nodes gets /32 SNAT on alternate interfaces regardless
+# of EgressIP association (traffic enters via ovn-k8s-mp0 locally).
+
+# EgressIP pod on gateway node -- matched by the EgressIP CR.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gw-egressip-pod
+  namespace: demo-egressip
+  labels:
+    app: demo
+spec:
+  terminationGracePeriodSeconds: 0
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: k8s.ovn.org/egress-assignable
+                operator: Exists
+  containers:
+    - name: demo
+      image: registry.k8s.io/e2e-test-images/agnhost:2.45
+      command: ["sleep", "infinity"]
+
+# Non-EgressIP pod on gateway node -- NOT matched by any EgressIP CR.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gw-non-egressip-pod
+  namespace: demo-egressip
+spec:
+  terminationGracePeriodSeconds: 0
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: k8s.ovn.org/egress-assignable
+                operator: Exists
+  containers:
+    - name: test
+      image: registry.k8s.io/e2e-test-images/agnhost:2.45
+      command: ["sleep", "infinity"]
+
+# EgressService pod on gateway node -- backend for a second LB service.
+# Verifies that EgressService SNAT to LB IP works on the gateway node
+# (excluded from /32 SNAT via the egresssvc-pods set).
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gw-egressservice-pod
+  namespace: demo-egressip
+  labels:
+    app: gw-egressservice
+spec:
+  terminationGracePeriodSeconds: 0
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: k8s.ovn.org/egress-assignable
+                operator: Exists
+  containers:
+    - name: agnhost
+      image: registry.k8s.io/e2e-test-images/agnhost:2.45
+      command: ["sleep", "infinity"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gw-egressservice-lb
+  namespace: demo-egressip
+spec:
+  type: LoadBalancer
+  selector:
+    app: gw-egressservice
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: k8s.ovn.org/v1
+kind: EgressService
+metadata:
+  name: gw-egressservice-lb
+  namespace: demo-egressip
+spec:
+  sourceIPBy: "LoadBalancerIP"
+  nodeSelector:
+    matchLabels:
+      k8s.ovn.org/egress-assignable: ""

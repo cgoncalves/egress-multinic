@@ -14,10 +14,12 @@ A bash reconciler script runs as a systemd service on every worker node. It self
 
 ### Traffic differentiation on gateway nodes
 
-EgressIP traffic enters the gateway node via OVN's Geneve tunnel (`ovn-k8s-mp0`). Egress-gateway traffic enters via the physical network (`br-ex`). The reconciler uses the ingress interface (`iifname`) in the nftables forward chain to distinguish the two:
+The reconciler uses a combination of ingress interface marking and nftables sets to distinguish three traffic types:
 
-- **EgressIP traffic** (`iifname "ovn-k8s-mp0"`): not marked, SNAT'd to the admin-configured /32 IP on the outgoing interface.
-- **Egress-gateway traffic** (all other forwarded non-cluster traffic): marked with `0x3000`, masqueraded to the outgoing interface's host IP.
+- **Egress-gateway traffic** (enters via `br-ex` from worker nodes): marked with `0x3000` in the forward chain, masqueraded to the outgoing interface's host IP.
+- **EgressIP traffic** (enters via `ovn-k8s-mp0`, source IP in `egressip-pods` set): marked with `0x3001`, SNAT'd to the admin-configured /32 IP on the outgoing interface.
+- **EgressService traffic** (enters via `ovn-k8s-mp0`, source IP in `egresssvc-pods` set): marked with `0x3001`, skipped by our chain so OVN's `egress-services` chain SNATs to the LoadBalancer IP.
+- **Other pod traffic** (enters via `ovn-k8s-mp0`, source IP not in either set): marked with `0x3001`, masqueraded to the outgoing interface's host IP (fallback).
 
 ## Prerequisites
 
@@ -143,9 +145,9 @@ oc debug node/<gateway> -- chroot /host nft list table inet egress-snat
 ## Limitations
 
 - Each alternate (non-OVN) interface supports exactly **one SNAT IP** for all EgressIP traffic. Per-pod EgressIP source address differentiation is only available on the OVN interface (`br-ex`).
-- The `iifname` differentiation between EgressIP and egress-gateway traffic requires both capabilities to be deployed together. Without egress-gateway active on worker nodes, all pod traffic enters gateway nodes via `ovn-k8s-mp0` and receives the /32 SNAT.
-- Pods must be scheduled on **non-gateway worker nodes** (not on nodes labeled `k8s.ovn.org/egress-assignable`). Pods on gateway nodes send traffic through OVN locally via `ovn-k8s-mp0`, bypassing the egress-gateway worker-mode routing. This means all traffic from pods on gateway nodes -- whether EgressIP-associated or not -- gets /32 SNAT on alternate interfaces. The `iifname` differentiation only works when traffic traverses the physical network from a worker to the gateway. Use node affinity with `k8s.ovn.org/egress-assignable DoesNotExist` to avoid scheduling on gateway nodes.
-- The per-interface SNAT rules match on the **outgoing interface**, not on EgressIP association. Any traffic exiting an alternate interface (due to destination-based routing via NNCP) is SNAT'd to the /32 IP, regardless of whether an EgressIP CR exists. The NNCP ip rules and routes determine which traffic reaches the alternate interfaces; the SNAT rules apply unconditionally to traffic that does.
+- The `iifname` differentiation between EgressIP and egress-gateway traffic requires both capabilities to be deployed together. Without egress-gateway active on worker nodes, all pod traffic enters gateway nodes via `ovn-k8s-mp0` and the reconciler uses set-based matching to determine the SNAT behavior.
+- The reconciler maintains two nftables sets updated each cycle: `egressip-pods` (from ip rules at priority 6000) for /32 SNAT, and `egresssvc-pods` (from OVN's `egress-service-snat-v4` map) for EgressService exclusion. There is a window of up to `RECONCILE_INTERVAL` seconds after an EgressIP or EgressService assignment change where a pod may get the wrong SNAT. New EgressIP pods briefly get masquerade; new EgressService pods briefly get /32 SNAT.
+- **EgressService** pods are excluded from /32 SNAT so OVN's `egress-services` nftables chain can SNAT them to the LoadBalancer IP. The EgressService CR should include `nodeSelector` matching `k8s.ovn.org/egress-assignable` to ensure the EgressService host is a gateway node with the alternate interfaces.
 - EgressIP multi-NIC SNAT IPs (`EGRESSIP_SNAT`) are configured in the reconciler config file and apply to all gateway nodes. If different gateway nodes need different SNAT IPs, see [Per-Node SNAT IPs](#per-node-snat-ips) below.
 - Requires `routingViaHost: true` and `ipForwarding: Global`.
 - Double SNAT for egress-gateway traffic: Pod IP -> Worker IP (OVN-K) -> Gateway IP (masquerade).

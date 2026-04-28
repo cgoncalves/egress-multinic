@@ -185,14 +185,22 @@ EOF
 
 setup_egress() {
   local fwmark_fwd="0x3000"
+  local fwmark_eip="0x3001"
 
-  # Build per-interface SNAT rules for EgressIP workaround
+  # Build per-interface SNAT rules for EgressIP workaround.
+  # 0x3001-marked traffic (from ovn-k8s-mp0) gets /32 SNAT only if the
+  # source IP is in the egressip-pods set. EgressService traffic (source
+  # in egresssvc-pods) is skipped so OVN's egress-services chain handles it.
+  # All other traffic on alternate interfaces gets masquerade fallback.
   local snat_rules=""
+  local masq_fallback=""
   for entry in "${EGRESSIP_SNAT[@]+"${EGRESSIP_SNAT[@]}"}"; do
     [ -z "$entry" ] && continue
     IFS=':' read -r iface snat_ip <<< "$entry"
     snat_rules="${snat_rules}
-    oifname \"${iface}\" snat ip to ${snat_ip}"
+    meta mark ${fwmark_eip} ip saddr @egressip-pods oifname \"${iface}\" snat ip to ${snat_ip}"
+    masq_fallback="${masq_fallback}
+    oifname \"${iface}\" masquerade"
   done
 
   local v6_forward_rule=""
@@ -204,18 +212,81 @@ setup_egress() {
 table inet ${NFT_TABLE_EGRESS}
 flush table inet ${NFT_TABLE_EGRESS}
 table inet ${NFT_TABLE_EGRESS} {
+  set egressip-pods {
+    type ipv4_addr
+    comment "EgressIP pod IPs -- /32 SNAT applied"
+  }
+  set egresssvc-pods {
+    type ipv4_addr
+    comment "EgressService pod IPs -- excluded from /32 SNAT"
+  }
   chain forward {
     type filter hook forward priority filter - 1; policy accept;
-    iifname "${OVN_MGMT_PORT}" return
+    iifname "${OVN_MGMT_PORT}" meta mark set ${fwmark_eip} return
     ip daddr != { ${EXCLUDE_CIDRS} } meta mark set ${fwmark_fwd}
     ${v6_forward_rule}
   }
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
-    meta mark ${fwmark_fwd} masquerade${snat_rules}
+    meta mark ${fwmark_fwd} masquerade
+    ip saddr @egresssvc-pods return${snat_rules}${masq_fallback}
   }
 }
 EOF
+
+  sync_egressip_set
+  sync_egresssvc_set
+}
+
+# Syncs the egressip-pods nftables set with pod IPs from ip rules at
+# priority 6000 (EgressIP rules created by OVN).
+sync_egressip_set() {
+  local rule_ips
+  rule_ips=$(ip rule show priority 6000 2>/dev/null \
+    | grep -oP 'from \K\d+\.\d+\.\d+\.\d+' | sort)
+
+  local current_set_ips
+  current_set_ips=$(nft list set inet "$NFT_TABLE_EGRESS" egressip-pods 2>/dev/null \
+    | grep -oP '\d+\.\d+\.\d+\.\d+' | sort)
+
+  if [ "$rule_ips" = "$current_set_ips" ]; then
+    return
+  fi
+
+  nft flush set inet "$NFT_TABLE_EGRESS" egressip-pods 2>/dev/null || return
+
+  if [ -n "$rule_ips" ]; then
+    local elements
+    elements=$(echo "$rule_ips" | paste -sd, -)
+    nft add element inet "$NFT_TABLE_EGRESS" egressip-pods "{ ${elements} }" 2>/dev/null
+    echo "[egress] updated egressip-pods set: ${elements}"
+  fi
+}
+
+# Syncs the egresssvc-pods nftables set with OVN's egress-service-snat-v4 map.
+# EgressService pod IPs are excluded from our /32 SNAT so OVN's
+# egress-services chain can SNAT them to the LoadBalancer IP instead.
+sync_egresssvc_set() {
+  local ovn_map_ips
+  ovn_map_ips=$(nft list map inet ovn-kubernetes egress-service-snat-v4 2>/dev/null \
+    | grep -oP '\d+\.\d+\.\d+\.\d+(?= comment)' | sort)
+
+  local current_set_ips
+  current_set_ips=$(nft list set inet "$NFT_TABLE_EGRESS" egresssvc-pods 2>/dev/null \
+    | grep -oP '\d+\.\d+\.\d+\.\d+' | sort)
+
+  if [ "$ovn_map_ips" = "$current_set_ips" ]; then
+    return
+  fi
+
+  nft flush set inet "$NFT_TABLE_EGRESS" egresssvc-pods 2>/dev/null || return
+
+  if [ -n "$ovn_map_ips" ]; then
+    local elements
+    elements=$(echo "$ovn_map_ips" | paste -sd, -)
+    nft add element inet "$NFT_TABLE_EGRESS" egresssvc-pods "{ ${elements} }" 2>/dev/null
+    echo "[egress] updated egresssvc-pods set: ${elements}"
+  fi
 }
 
 cleanup_egress() {
@@ -229,7 +300,7 @@ validate_egress() {
   local current
   current=$(nft list table inet "$NFT_TABLE_EGRESS" 2>/dev/null) || return 1
 
-  echo "$current" | grep -q "iifname \"${OVN_MGMT_PORT}\"" || return 1
+  echo "$current" | grep -q "iifname \"${OVN_MGMT_PORT}\".*meta mark set 0x00003001" || return 1
 
   for entry in "${EGRESSIP_SNAT[@]+"${EGRESSIP_SNAT[@]}"}"; do
     [ -z "$entry" ] && continue
@@ -309,6 +380,9 @@ main() {
         cleanup_worker
         setup_egress
         LAST_STATE="$desired_state"
+      else
+        sync_egressip_set
+        sync_egresssvc_set
       fi
     else
       local self_ip healthy_ips
