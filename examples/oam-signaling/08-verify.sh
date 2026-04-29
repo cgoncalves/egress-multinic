@@ -87,6 +87,41 @@ else
     echo ""
 fi
 
+# --- Sanity checks (no interference with normal traffic) ---
+
+echo "=== Test 10: Non-EgressIP pod -> external via br-ex (not alternate interface) ==="
+echo "Expected: HTTP response (traffic exits via default route, not oam-host/sig-host)"
+echo "Note: uses non-egressip-pod because egressip-pod traffic is routed via the"
+echo "      EgressIP-bound interface (oam-host) which has no route to the internet."
+HTTP_CODE=$(oc exec -n demo-egressip non-egressip-pod -- curl -s --max-time 10 -o /dev/null -w "%{http_code}" http://1.1.1.1:80 2>/dev/null)
+if [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" != "000" ]; then
+    echo "OK (HTTP ${HTTP_CODE})"
+else
+    echo "(failed - HTTP ${HTTP_CODE:-timeout})"
+fi
+echo ""
+
+echo "=== Test 11: Cluster DNS resolution ==="
+echo "Expected: successful resolution of kubernetes.default.svc.cluster.local"
+DNS_RESULT=$(oc exec -n demo-egressip egressip-pod -- getent hosts kubernetes.default.svc.cluster.local 2>/dev/null)
+if [ -n "$DNS_RESULT" ]; then
+    echo "OK (${DNS_RESULT})"
+else
+    echo "(failed)"
+fi
+echo ""
+
+echo "=== Test 12: Pod-to-Node connectivity (machine network) ==="
+echo "Expected: reachable (machine network excluded from steering/SNAT)"
+NODE_IP=$(oc get node "${GATEWAY_NODE}" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null | awk '{print $1}')
+KUBELET_CODE=$(oc exec -n demo-egressip egressip-pod -- curl -sk --max-time 5 -o /dev/null -w "%{http_code}" "https://${NODE_IP}:10250/healthz" 2>/dev/null)
+if [ "$KUBELET_CODE" = "200" ] || [ "$KUBELET_CODE" = "401" ] || [ "$KUBELET_CODE" = "403" ]; then
+    echo "OK (HTTP ${KUBELET_CODE} to ${NODE_IP}:10250)"
+else
+    echo "(failed - HTTP ${KUBELET_CODE:-timeout} to ${NODE_IP}:10250)"
+fi
+echo ""
+
 echo "=== Gateway node state (${GATEWAY_NODE}) ==="
 VERIFY_B64=$(base64 -w0 "${SCRIPT_DIR}/aux/verify-node.sh")
 oc debug node/${GATEWAY_NODE} -- bash -c "echo ${VERIFY_B64} | base64 -d | nsenter -t 1 -m -u -i -n -p -- bash" 2>&1 | grep -v "^Starting\|^Removing\|^Temporary\|^To use"
