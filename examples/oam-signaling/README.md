@@ -193,6 +193,11 @@ bash examples/oam-signaling/09-cleanup.sh
 | 7 | gw-egressip-pod | gateway | OAM | 192.168.150.200 | EgressIP on gateway, source in `egressip-pods` set, /32 SNAT |
 | 8 | gw-non-egressip-pod | gateway | OAM | 192.168.150.10 | Not in any set, masquerade fallback |
 | 9 | gw-egressservice-pod | gateway | OAM | 10.6.105.241 | EgressService on gateway, source in `egresssvc-pods` set, LB IP SNAT by OVN |
+| 10 | non-egressip-pod | worker | 1.1.1.1 (external) | HTTP response | Traffic via br-ex default route, not alternate interfaces |
+| 11 | egressip-pod | worker | cluster DNS | resolved | DNS not affected by steering/SNAT |
+| 12 | egressip-pod | worker | gateway node:10250 | HTTP response | Machine network excluded from steering |
+
+Tests 5-6, 8, and 9 require the set-based reconciler from the `experimental` branch to produce correct results. On `main`, these tests show /32 SNAT instead.
 
 ## Notes
 
@@ -200,5 +205,6 @@ bash examples/oam-signaling/09-cleanup.sh
 - The EgressIP CR uses `podSelector` (`app: demo`) to match only `egressip-pod` and `gw-egressip-pod`. Other pods are not associated with any EgressIP.
 - EgressService CRs include `nodeSelector` matching `k8s.ovn.org/egress-assignable` to ensure the EgressService host is a gateway node. Requires MetalLB installed.
 - The reconciler maintains two nftables sets (`egressip-pods` and `egresssvc-pods`) updated each cycle. There is a window of up to `RECONCILE_INTERVAL` seconds after assignment changes where SNAT may be incorrect.
+- EgressIP pods can only reach destinations routable from the EgressIP-bound interface. In this example, the EgressIP is bound to `oam-host` which only has routes to the simulated OAM/signaling networks. Traffic to external destinations (e.g., 1.1.1.1) from EgressIP pods fails because `oam-host` has no default route to the internet. To reach external destinations, the EgressIP address should be on a routable interface (e.g., `br-ex`). Test 10 uses `non-egressip-pod` for this reason.
 - The simulated infrastructure (netns, veth pairs, HTTP servers) is ephemeral and does not survive node reboots. Re-run `03-setup-infra.sh` after a gateway node reboot.
 - The NNCP uses `type: veth` for the interfaces since they are veth pairs created by the setup script. For physical NICs, use `type: ethernet`.
