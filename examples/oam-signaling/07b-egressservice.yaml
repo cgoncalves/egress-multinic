@@ -1,0 +1,83 @@
+# EgressService test: a pod backed by a LoadBalancer service with an
+# EgressService CR. Traffic from this pod is SNAT'd to the LoadBalancer
+# ingress IP by OVN's egress-services nftables chain.
+#
+# Requires MetalLB installed and configured.
+
+# MetalLB IPAddressPool for the LoadBalancer IP.
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: egress-multinic-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 10.6.105.240-10.6.105.250
+
+# L2 advertisement -- restricted to the gateway node so that MetalLB
+# assigns the LB IP there, making the gateway the EgressService host.
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: egress-multinic-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - egress-multinic-pool
+  nodeSelectors:
+    - matchLabels:
+        k8s.ovn.org/egress-assignable: ""
+
+# EgressService pod -- backend for the LoadBalancer service.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: egressservice-pod
+  namespace: demo-egressip
+  labels:
+    app: egressservice
+spec:
+  terminationGracePeriodSeconds: 0
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: k8s.ovn.org/egress-assignable
+                operator: DoesNotExist
+  containers:
+    - name: agnhost
+      image: registry.k8s.io/e2e-test-images/agnhost:2.45
+      command: ["sleep", "infinity"]
+
+# LoadBalancer service backed by the EgressService pod.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: egressservice-lb
+  namespace: demo-egressip
+spec:
+  type: LoadBalancer
+  selector:
+    app: egressservice
+  ports:
+    - port: 8080
+      targetPort: 8080
+
+# EgressService CR: tells OVN to SNAT egress traffic from this service's
+# pods to the LoadBalancer ingress IP instead of the node IP.
+---
+apiVersion: k8s.ovn.org/v1
+kind: EgressService
+metadata:
+  name: egressservice-lb
+  namespace: demo-egressip
+spec:
+  sourceIPBy: "LoadBalancerIP"
+  nodeSelector:
+    matchLabels:
+      k8s.ovn.org/egress-assignable: ""

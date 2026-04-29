@@ -15,9 +15,13 @@ PROJECT_DIR="${SCRIPT_DIR}/../.."
 echo "=== Cleaning up OAM/signaling example ==="
 
 echo "--- Deleting Kubernetes resources ---"
+oc delete egressservice egressservice-lb -n demo-egressip --ignore-not-found
+oc delete svc egressservice-lb -n demo-egressip --ignore-not-found
 oc delete egressip egressip-oam --ignore-not-found
 oc delete namespace demo-egressip --ignore-not-found
 oc delete nncp egress-multinic-oam-sig --ignore-not-found
+oc delete l2advertisement egress-multinic-l2 -n metallb-system --ignore-not-found
+oc delete ipaddresspool egress-multinic-pool -n metallb-system --ignore-not-found
 
 # Delete the MachineConfig and wait for the pool to reconcile before
 # deleting the pool. Deleting both simultaneously leaves nodes stuck

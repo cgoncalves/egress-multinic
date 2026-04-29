@@ -69,6 +69,12 @@ PYEOF
         nsenter --net=/var/run/netns/"${ns}" \
         python3 /usr/local/bin/http-echo-server.py "${listen_port}"
 
+    # Add default route so replies to any external IP (e.g., MetalLB LB IPs)
+    # can reach the gateway node via the veth pair.
+    ip netns exec "${ns}" bash -c "
+        ip route add default via ${host_ip} 2>/dev/null || true
+    "
+
     echo "  HTTP listener on port ${listen_port} in netns ${ns}"
 }
 
