@@ -1,11 +1,14 @@
 # NNCP for the OAM/signaling example.
-# Configures oam-host and sig-host veth interfaces with:
-# - Host IPs for connectivity
-# - /32 SNAT IPs for EgressIP traffic
-# - Static routes for destination-based routing
-# - Catch-all ip rule at priority 5550 to route via main table before
-#   EgressIP (priority 6000). The main table has destination-specific routes
-#   to alternate interfaces plus the default route via br-ex.
+#
+# Configures:
+# - egressip-dummy: dummy interface for EgressIP address assignment.
+#   OVN binds EgressIP addresses to the node that has an interface with an
+#   IP in the same subnet. The dummy interface hosts this subnet (10.99.0.0/24)
+#   so that EgressIP addresses don't need to be on the actual egress interfaces.
+# - oam-host, sig-host: alternate interfaces with host IPs and /32 SNAT IPs
+# - Static routes for destination-based routing to alternate interfaces
+# - Catch-all ip rule at priority 5550 to route all traffic via the main table
+#   before OVN's EgressIP rule (priority 6000)
 ---
 apiVersion: nmstate.io/v1
 kind: NodeNetworkConfigurationPolicy
@@ -16,6 +19,18 @@ spec:
     k8s.ovn.org/egress-assignable: ""
   desiredState:
     interfaces:
+      - name: egressip-dummy
+        type: dummy
+        state: up
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: 10.99.0.1
+              prefix-length: 24
+        ipv6:
+          enabled: false
+
       - name: oam-host
         type: veth
         state: up
@@ -55,6 +70,6 @@ spec:
 
     route-rules:
       config:
-        - ip-to: 0.0.0.0/0
+        - family: ipv4
           route-table: 254
           priority: 5550

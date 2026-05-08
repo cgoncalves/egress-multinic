@@ -1,9 +1,11 @@
-# EgressIP bound to the OAM interface (oam-host, 192.168.150.0/24 subnet).
-# With the workaround, actual SNAT uses the admin-configured /32 IP on the
-# interface (192.168.150.200), not this EgressIP address.
+# EgressIP bound to the egressip-dummy interface (10.99.0.0/24 subnet).
+# The EgressIP address is on the dummy interface -- it only serves as a
+# selector to associate pods with this EgressIP CR. Actual routing is
+# handled by the catch-all ip rule (priority 5550) and main table static
+# routes. SNAT is handled by our nftables rules (/32 IPs on alternate
+# interfaces) or masquerade for br-ex traffic.
 #
-# Selects only the egressip-pod via podSelector (not the entire namespace) so that
-# non-egressip-pod in the same namespace is NOT associated with this EgressIP.
+# Selects only pods with label app=demo via podSelector.
 ---
 apiVersion: k8s.ovn.org/v1
 kind: EgressIP
@@ -11,7 +13,7 @@ metadata:
   name: egressip-oam
 spec:
   egressIPs:
-    - 192.168.150.100
+    - 10.99.0.100
   namespaceSelector:
     matchLabels:
       egress-group: oam-sig

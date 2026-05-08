@@ -120,9 +120,10 @@ netns "signaling": HTTP server sees source: 192.168.200.200
 
 | Component | Address | Description |
 |-----------|---------|-------------|
+| egressip-dummy (gateway) | 10.99.0.1/24 | Dummy interface for EgressIP binding |
+| egressip-dummy (gateway) | 10.99.0.100/32 | EgressIP assigned by OVN |
 | oam-host (gateway) | 192.168.150.10/24 | Host IP on OAM interface |
 | oam-host (gateway) | 192.168.150.200/32 | SNAT IP for EgressIP traffic |
-| oam-host (gateway) | 192.168.150.100/32 | EgressIP assigned by OVN |
 | sig-host (gateway) | 192.168.200.10/24 | Host IP on signaling interface |
 | sig-host (gateway) | 192.168.200.200/32 | SNAT IP for EgressIP traffic |
 | oam-ns (netns router) | 192.168.150.1/24 | Next-hop for OAM traffic |

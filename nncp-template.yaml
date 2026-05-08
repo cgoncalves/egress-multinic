@@ -1,13 +1,14 @@
 # NodeNetworkConfigurationPolicy template for alternate interfaces.
 #
 # Configures per-node:
-# - Interface IPs (/24) for connectivity
-# - Admin-configured SNAT IPs (/32) for EgressIP traffic
+# - egressip-dummy: dummy interface for EgressIP address assignment. OVN binds
+#   EgressIP addresses to the node with an interface in the same subnet. The
+#   dummy hosts this subnet so EgressIP addresses don't need to be on the actual
+#   egress interfaces. All gateway nodes share the same dummy subnet.
+# - Alternate interface IPs (/24) for connectivity and /32 SNAT IPs
 # - Static routes for destination-based routing
 # - Catch-all IP routing policy rule (priority 5550) to route all traffic via
-#   the main routing table before the EgressIP rule (priority 6000). The main
-#   table has destination-specific routes to alternate interfaces plus the
-#   default route via br-ex for internet-bound traffic.
+#   the main table before OVN's EgressIP rule (priority 6000)
 #
 # Create one NNCP per gateway node so that each node can have its own /32 SNAT
 # IP addresses. Adjust interface names, IP addresses, routes, and node
@@ -25,6 +26,18 @@ spec:
     kubernetes.io/hostname: gateway-node1.example.com
   desiredState:
     interfaces:
+      - name: egressip-dummy
+        type: dummy
+        state: up
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: <DUMMY_IP>       # e.g., 10.99.0.1 (same subnet on all gateway nodes)
+              prefix-length: 24
+        ipv6:
+          enabled: false
+
       - name: <INTERFACE_1>
         type: ethernet
         state: up
@@ -47,6 +60,6 @@ spec:
 
     route-rules:
       config:
-        - ip-to: 0.0.0.0/0
+        - family: ipv4
           route-table: 254
           priority: 5550
