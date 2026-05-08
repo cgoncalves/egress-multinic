@@ -102,28 +102,83 @@ else
     ((SKIP+=3))
 fi
 
-# --- Sanity checks ---
+# --- Default route tests (external destination via br-ex) ---
+# EgressIP pods route ALL traffic via the EgressIP-bound interface (oam-host),
+# which has no default route to the internet. These are expected to timeout.
 
-HTTP_CODE=$(oc exec -n demo-egressip non-egressip-pod -- curl -s --max-time 10 -o /dev/null -w "%{http_code}" http://1.1.1.1:80 2>/dev/null)
-if [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" != "000" ]; then
-    check_ok "Test 10: Non-EgressIP pod -> external via br-ex (HTTP ${HTTP_CODE})" "ok"
+check_external() {
+    local test_name="$1" pod="$2" expect_fail="${3:-false}"
+    local http_code
+    http_code=$(oc exec -n demo-egressip "$pod" -- curl -s --max-time 10 -o /dev/null -w "%{http_code}" http://1.1.1.1:80 2>/dev/null)
+    if [ -n "$http_code" ] && [ "$http_code" != "000" ]; then
+        if [ "$expect_fail" = "true" ]; then
+            echo "[FAIL] ${test_name}"
+            echo "  expected: timeout (EgressIP routes via oam-host, no internet route)"
+            echo "  got:      HTTP ${http_code}"
+            ((FAIL++))
+        else
+            echo "[PASS] ${test_name} (HTTP ${http_code})"
+            ((PASS++))
+        fi
+    else
+        if [ "$expect_fail" = "true" ]; then
+            echo "[PASS] ${test_name} (timeout -- expected, oam-host has no internet route)"
+            ((PASS++))
+        else
+            echo "[FAIL] ${test_name}"
+            echo "  expected: HTTP response"
+            echo "  got:      timeout"
+            ((FAIL++))
+        fi
+    fi
+    echo ""
+}
+
+check_external "Test 10: egressip-pod -> external (1.1.1.1)" "egressip-pod" "true"
+check_external "Test 11: non-egressip-pod -> external (1.1.1.1)" "non-egressip-pod"
+
+LB_IP=$(oc get svc egressservice-lb -n demo-egressip -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+if [ -n "${LB_IP}" ]; then
+    check_external "Test 12: egressservice-pod -> external (1.1.1.1)" "egressservice-pod"
 else
-    check_ok "Test 10: Non-EgressIP pod -> external via br-ex" "HTTP ${HTTP_CODE:-timeout}"
+    echo "[SKIP] Test 12: egressservice-pod -> external (no LB IP)"
+    echo ""
+    ((SKIP++))
 fi
+
+if oc get pod -n demo-egressip gw-egressip-pod &>/dev/null; then
+    check_external "Test 13: gw-egressip-pod -> external (1.1.1.1)" "gw-egressip-pod" "true"
+    check_external "Test 14: gw-non-egressip-pod -> external (1.1.1.1)" "gw-non-egressip-pod"
+
+    GW_LB_IP=$(oc get svc gw-egressservice-lb -n demo-egressip -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+    if [ -n "${GW_LB_IP}" ]; then
+        check_external "Test 15: gw-egressservice-pod -> external (1.1.1.1)" "gw-egressservice-pod"
+    else
+        echo "[SKIP] Test 15: gw-egressservice-pod -> external (no LB IP)"
+        echo ""
+        ((SKIP++))
+    fi
+else
+    echo "[SKIP] Tests 13-15: Gateway node pods (not deployed)"
+    echo ""
+    ((SKIP+=3))
+fi
+
+# --- Other sanity checks ---
 
 DNS_RESULT=$(oc exec -n demo-egressip egressip-pod -- getent hosts kubernetes.default.svc.cluster.local 2>/dev/null)
 if [ -n "$DNS_RESULT" ]; then
-    check_ok "Test 11: Cluster DNS resolution" "ok"
+    check_ok "Test 16: Cluster DNS resolution" "ok"
 else
-    check_ok "Test 11: Cluster DNS resolution" "resolution failed"
+    check_ok "Test 16: Cluster DNS resolution" "resolution failed"
 fi
 
 NODE_IP=$(oc get node "${GATEWAY_NODE}" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null | awk '{print $1}')
 KUBELET_CODE=$(oc exec -n demo-egressip egressip-pod -- curl -sk --max-time 5 -o /dev/null -w "%{http_code}" "https://${NODE_IP}:10250/healthz" 2>/dev/null)
 if [ "$KUBELET_CODE" = "200" ] || [ "$KUBELET_CODE" = "401" ] || [ "$KUBELET_CODE" = "403" ]; then
-    check_ok "Test 12: Pod-to-Node connectivity (HTTP ${KUBELET_CODE} to ${NODE_IP})" "ok"
+    check_ok "Test 17: Pod-to-Node connectivity (HTTP ${KUBELET_CODE} to ${NODE_IP})" "ok"
 else
-    check_ok "Test 12: Pod-to-Node connectivity (${NODE_IP})" "HTTP ${KUBELET_CODE:-timeout}"
+    check_ok "Test 17: Pod-to-Node connectivity (${NODE_IP})" "HTTP ${KUBELET_CODE:-timeout}"
 fi
 
 # --- Summary ---
