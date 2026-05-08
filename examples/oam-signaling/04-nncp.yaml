@@ -3,7 +3,9 @@
 # - Host IPs for connectivity
 # - /32 SNAT IPs for EgressIP traffic
 # - Static routes for destination-based routing
-# - IP rules at priority 5550 to bypass EgressIP routing table
+# - Catch-all ip rule at priority 5550 to route via main table before
+#   EgressIP (priority 6000). The main table has destination-specific routes
+#   to alternate interfaces plus the default route via br-ex.
 ---
 apiVersion: nmstate.io/v1
 kind: NodeNetworkConfigurationPolicy
@@ -53,9 +55,6 @@ spec:
 
     route-rules:
       config:
-        - ip-to: 192.168.250.0/24
-          route-table: 254
-          priority: 5550
-        - ip-to: 192.168.251.0/24
+        - ip-to: 0.0.0.0/0
           route-table: 254
           priority: 5550

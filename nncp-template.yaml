@@ -4,8 +4,10 @@
 # - Interface IPs (/24) for connectivity
 # - Admin-configured SNAT IPs (/32) for EgressIP traffic
 # - Static routes for destination-based routing
-# - IP routing policy rules (priority 5550) to direct destination traffic to
-#   the main routing table before the EgressIP rule (priority 6000)
+# - Catch-all IP routing policy rule (priority 5550) to route all traffic via
+#   the main routing table before the EgressIP rule (priority 6000). The main
+#   table has destination-specific routes to alternate interfaces plus the
+#   default route via br-ex for internet-bound traffic.
 #
 # Create one NNCP per gateway node so that each node can have its own /32 SNAT
 # IP addresses. Adjust interface names, IP addresses, routes, and node
@@ -45,6 +47,6 @@ spec:
 
     route-rules:
       config:
-        - ip-to: <DEST_CIDR_1>
+        - ip-to: 0.0.0.0/0
           route-table: 254
           priority: 5550

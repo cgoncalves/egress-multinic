@@ -63,7 +63,7 @@ egressip-pod (10.132.x.x)
     v
 Gateway: ovn-k8s-mp0
     |
-    | ip rule 5550: to 192.168.250.0/24 -> main table
+    | ip rule 5550: catch-all -> main table
     | main table: 192.168.250.0/24 via 192.168.150.1 dev oam-host
     v
 Gateway: oam-host
@@ -93,7 +93,7 @@ Gateway: br-ex (arrives via physical network)
     | nftables forward:
     |   iifname != "ovn-k8s-mp0" -> mark 0x3000
     |
-    | ip rule 5550: to 192.168.250.0/24 -> main table
+    | ip rule 5550: catch-all -> main table
     | main table: 192.168.250.0/24 via 192.168.150.1 dev oam-host
     v
 Gateway: oam-host
@@ -110,7 +110,7 @@ Same as Flow 1 but routed to sig-host via destination-based routing.
 
 ```
 egressip-pod -> OVN Geneve -> Gateway: ovn-k8s-mp0
-    -> ip rule 5550: to 192.168.251.0/24 -> main table -> sig-host
+    -> ip rule 5550: catch-all -> main table -> sig-host
     -> nftables: oifname "sig-host" snat ip to 192.168.200.200
 
 netns "signaling": HTTP server sees source: 192.168.200.200
@@ -138,7 +138,7 @@ netns "signaling": HTTP server sees source: 192.168.200.200
 | 01 | `01-generate-machineconfig.sh` | Generate MachineConfig with encoded script and config |
 | 02 | `02-machineconfig-final.yaml` | `oc apply` -- deploys reconciler to all worker nodes |
 | 03 | `03-setup-infra.sh` | Create veth/netns infrastructure with HTTP servers |
-| 04 | `04-nncp.yaml` | `oc apply` -- configure /32 IPs, routes, ip rules |
+| 04 | `04-nncp.yaml` | `oc apply` -- configure /32 IPs, routes, catch-all ip rule |
 | 05 | `05-namespace.yaml` | `oc apply` -- create namespace with egress-group label |
 | 06 | `06-egressip.yaml` | `oc apply` -- EgressIP CR (selects pods with `app: demo`) |
 | 07a | `07-pod.yaml` | `oc apply` -- EgressIP and non-EgressIP pods on workers |
@@ -193,9 +193,14 @@ bash examples/oam-signaling/09-cleanup.sh
 | 7 | gw-egressip-pod | gateway | OAM | 192.168.150.200 | EgressIP on gateway, source in `egressip-pods` set, /32 SNAT |
 | 8 | gw-non-egressip-pod | gateway | OAM | 192.168.150.10 | Not in any set, masquerade fallback |
 | 9 | gw-egressservice-pod | gateway | OAM | 10.6.105.241 | EgressService on gateway, source in `egresssvc-pods` set, LB IP SNAT by OVN |
-| 10 | non-egressip-pod | worker | 1.1.1.1 (external) | HTTP response | Traffic via br-ex default route, not alternate interfaces |
-| 11 | egressip-pod | worker | cluster DNS | resolved | DNS not affected by steering/SNAT |
-| 12 | egressip-pod | worker | gateway node:10250 | HTTP response | Machine network excluded from steering |
+| 10 | egressip-pod | worker | 1.1.1.1 (external) | HTTP response | Catch-all ip rule → main table → default route via br-ex |
+| 11 | non-egressip-pod | worker | 1.1.1.1 (external) | HTTP response | Egress-gateway via br-ex default route |
+| 12 | egressservice-pod | worker | 1.1.1.1 (external) | HTTP response | EgressService via br-ex |
+| 13 | gw-egressip-pod | gateway | 1.1.1.1 (external) | HTTP response | Catch-all ip rule → main table → default route via br-ex |
+| 14 | gw-non-egressip-pod | gateway | 1.1.1.1 (external) | HTTP response | Main table default route via br-ex |
+| 15 | gw-egressservice-pod | gateway | 1.1.1.1 (external) | HTTP response | EgressService via br-ex |
+| 16 | egressip-pod | worker | cluster DNS | resolved | DNS not affected by steering/SNAT |
+| 17 | egressip-pod | worker | gateway node:10250 | HTTP response | Machine network excluded from steering |
 
 Tests 5-6, 8, and 9 require the set-based reconciler from the `experimental` branch to produce correct results. On `main`, these tests show /32 SNAT instead.
 
@@ -205,6 +210,6 @@ Tests 5-6, 8, and 9 require the set-based reconciler from the `experimental` bra
 - The EgressIP CR uses `podSelector` (`app: demo`) to match only `egressip-pod` and `gw-egressip-pod`. Other pods are not associated with any EgressIP.
 - EgressService CRs include `nodeSelector` matching `k8s.ovn.org/egress-assignable` to ensure the EgressService host is a gateway node. Requires MetalLB installed.
 - The reconciler maintains two nftables sets (`egressip-pods` and `egresssvc-pods`) updated each cycle. There is a window of up to `RECONCILE_INTERVAL` seconds after assignment changes where SNAT may be incorrect.
-- EgressIP pods can only reach destinations routable from the EgressIP-bound interface. In this example, the EgressIP is bound to `oam-host` which only has routes to the simulated OAM/signaling networks. Traffic to external destinations (e.g., 1.1.1.1) from EgressIP pods fails because `oam-host` has no default route to the internet. To reach external destinations, the EgressIP address should be on a routable interface (e.g., `br-ex`). Test 10 uses `non-egressip-pod` for this reason.
+- The catch-all ip rule at priority 5550 routes all traffic via the main table before OVN's EgressIP rule (priority 6000). The main table has destination-specific routes to alternate interfaces plus the default route via br-ex for internet-bound traffic. This allows EgressIP pods to reach both OAM/signaling networks and external destinations.
 - The simulated infrastructure (netns, veth pairs, HTTP servers) is ephemeral and does not survive node reboots. Re-run `03-setup-infra.sh` after a gateway node reboot.
 - The NNCP uses `type: veth` for the interfaces since they are veth pairs created by the setup script. For physical NICs, use `type: ethernet`.

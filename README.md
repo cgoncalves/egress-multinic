@@ -111,8 +111,8 @@ oc apply -f machineconfig-egress-multinic-final.yaml
 
 Create a NNCP per gateway node using `nncp-template.yaml` as a starting point. Each NNCP configures:
 - Interface IPs (/24) and SNAT IPs (/32)
-- Static routes for destination-based routing
-- IP routing policy rules at priority 5550
+- Static routes for destination-based routing to alternate interfaces
+- Catch-all IP routing policy rule at priority 5550 to route all traffic via the main table before the EgressIP rule (priority 6000). The main table's static routes direct traffic to alternate interfaces; the default route via br-ex handles internet-bound traffic.
 
 ### Step 8: Create EgressIP resources
 
