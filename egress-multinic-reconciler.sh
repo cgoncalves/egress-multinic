@@ -230,6 +230,7 @@ table inet ${NFT_TABLE_EGRESS} {
     type nat hook postrouting priority srcnat; policy accept;
     meta mark ${fwmark_fwd} masquerade
     ip saddr @egresssvc-pods return${snat_rules}${masq_fallback}
+    meta mark ${fwmark_eip} masquerade
   }
 }
 EOF
